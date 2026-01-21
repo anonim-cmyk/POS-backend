@@ -75,31 +75,32 @@ const deleteDish = async (id) => {
 // popular
 const getPopularDishes = async (limit = 10) => {
   return await Order.aggregate([
+    // hanya order selesai
+    {
+      $match: {
+        orderStatus: "completed",
+      },
+    },
+
     { $unwind: "$items" },
 
-    // 🔥 convert string → ObjectId
     {
-      $addFields: {
-        dishObjectId: {
-          $toObjectId: "$items.dishId",
+      $group: {
+        _id: "$items.menuId", // ✅ SESUAI MODEL
+        totalQty: { $sum: "$items.qty" }, // ✅ SESUAI MODEL
+        totalRevenue: {
+          $sum: { $multiply: ["$items.price", "$items.qty"] },
         },
       },
     },
 
-    {
-      $group: {
-        _id: "$dishObjectId",
-        numberOfOrders: { $sum: "$items.quantity" },
-      },
-    },
-
-    { $sort: { numberOfOrders: -1 } },
+    { $sort: { totalQty: -1 } },
 
     { $limit: limit },
 
     {
       $lookup: {
-        from: "dishes",
+        from: "dishes", // ⛔ PENTING: ini harus sesuai collection name
         localField: "_id",
         foreignField: "_id",
         as: "dish",
@@ -113,7 +114,8 @@ const getPopularDishes = async (limit = 10) => {
         _id: "$dish._id",
         name: "$dish.name",
         imageUrl: "$dish.imageUrl",
-        numberOfOrders: 1,
+        totalQty: 1,
+        totalRevenue: 1,
       },
     },
   ]);

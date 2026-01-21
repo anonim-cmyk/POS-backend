@@ -3,47 +3,84 @@ const Order = require("../models/orderModel");
 const Dish = require("../models/dishModel");
 const Table = require("../models/tableModel");
 const createHttpError = require("http-errors");
+const crypto = require("crypto");
+const { validate } = require("../models/paymentModel");
+
+const ALLOWED_STATUS = ["in_progress", "ready", "completed"];
 
 const addOrder = async (payload) => {
-  const { items, table, orderCode } = payload;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  if (!orderCode) {
-    throw createHttpError(400, "orderCode is required");
-  }
+  try {
+    const orderCode = payload.orderCode || `ORDER-${crypto.randomUUID()}`;
 
-  const existingOrder = await Order.findOne({ orderCode });
-  if (existingOrder) {
-    throw createHttpError(400, "Order with this code already exists");
-  }
+    const existingOrder = await Order.findOne({ orderCode }).session(session);
 
-  // Stock validation
-  for (const item of items) {
-    const dish = await Dish.findById(item.dishId);
-    if (!dish) {
-      throw createHttpError(404, `Dish not found: ${item.dishId}`);
+    if (existingOrder) {
+      throw createHttpError(400, "Order with this code already exists");
     }
-    if (dish.stock < item.quantity) {
-      throw createHttpError(400, `Not enough stock for ${dish.name}`);
+
+    // 🔹 Stock validation
+    for (const item of payload.items) {
+      const dish = await Dish.findById(item.dishId).session(session);
+
+      if (!dish) {
+        throw createHttpError(404, `Dish not found: ${item.dishId}`);
+      }
+
+      if (dish.stock < item.quantity) {
+        throw createHttpError(400, `Not enough stock for ${dish.name}`);
+      }
+
+      dish.stock -= item.quantity;
+      await dish.save({ session });
     }
-    dish.stock -= item.quantity;
-    await dish.save();
+
+    // 🔹 TRANSFORM PAYLOAD → SCHEMA
+    const orderPayload = {
+      orderCode,
+      orderStatus: "in_progress",
+
+      customer: {
+        name: payload.customerDetails.name,
+        phone: String(payload.customerDetails.phone ?? ""),
+        guests: payload.customerDetails.guests,
+      },
+
+      bills: payload.bills,
+      table: payload.table,
+
+      items: payload.items.map((item) => ({
+        menuId: item.dishId,
+        name: item.name,
+        price: item.pricePerQuantity,
+        qty: item.quantity,
+      })),
+    };
+
+    const [order] = await Order.create([orderPayload], { session });
+
+    if (payload.table) {
+      await Table.findByIdAndUpdate(
+        payload.table,
+        {
+          status: "Booked",
+          currentOrder: order._id,
+        },
+        { session }
+      );
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return order;
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
   }
-
-  const order = new Order({
-    ...payload,
-    orderCode,
-  });
-
-  await order.save();
-
-  if (table) {
-    await Table.findByIdAndUpdate(table, {
-      status: "Booked",
-      currentOrder: order._id,
-    });
-  }
-
-  return order;
 };
 
 const getOrderById = async (id) => {
@@ -102,7 +139,7 @@ const getOrders = async ({
   if (search) {
     query.$or = [
       {
-        "customerDetails.name": { $regex: search, $options: "i" },
+        "customer.name": { $regex: search, $options: "i" },
       },
       {
         orderCode: { $regex: search, $options: "i" },
@@ -112,7 +149,7 @@ const getOrders = async ({
   // 🔹 Pagination
   const skip = (Number(page) - 1) * Number(limit);
 
-  const [orders, total] = await Promise.all([
+  const [data, total] = await Promise.all([
     Order.find(query)
       .populate("table")
       .sort({ createdAt: -1 })
@@ -122,7 +159,7 @@ const getOrders = async ({
   ]);
 
   return {
-    data: orders,
+    data,
     meta: {
       page: Number(page),
       limit: Number(limit),
@@ -133,23 +170,58 @@ const getOrders = async ({
 };
 
 const updateOrder = async (id, orderStatus) => {
+  if (!ALLOWED_STATUS.includes(orderStatus)) {
+    throw createHttpError(400, "Invalid order status");
+  }
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw createHttpError(404, "Invalid Id!");
   }
 
-  const order = await Order.findByIdAndUpdate(
-    id,
-    { orderStatus },
-    { new: true }
-  ).populate("table");
+  const order = await Order.findById(id).populate("table");
 
   if (!order) {
     throw createHttpError(404, "Order Not Found!");
   }
 
-  if (orderStatus === "Completed" && order.table?._id) {
+  const validateNext = {
+    in_progress: ["ready"],
+    ready: ["completed"],
+    completed: [],
+  };
+
+  const allowedNext = validateNext[order.orderStatus] || [];
+
+  if (!allowedNext.includes(orderStatus)) {
+    throw createHttpError(
+      400,
+      `Invalid status transition from ${order.orderStatus} to ${orderStatus}`
+    );
+  }
+
+  if (orderStatus === "completed") {
+    const Payment = require("../models/paymentModel");
+
+    const payment = await Payment.findOne({ order: order._id });
+
+    if (!payment) {
+      throw createHttpError(400, "Payment not found for this order");
+    }
+
+    if (payment.status !== "success") {
+      throw createHttpError(
+        400,
+        "Order cannot be completed before payment success"
+      );
+    }
+  }
+
+  order.orderStatus = orderStatus;
+  await order.save();
+
+  if (orderStatus === "completed" && order.table?._id) {
     await Table.findByIdAndUpdate(order.table._id, {
       status: "Available",
+      currentOrder: null,
     });
   }
 

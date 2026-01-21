@@ -1,13 +1,39 @@
 const mongoose = require("mongoose");
 
+const orderItemSchema = new mongoose.Schema(
+  {
+    menuId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Dish",
+      required: true,
+    },
+    name: {
+      type: String,
+      required: true,
+    },
+    price: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    qty: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+  },
+  { _id: false }
+);
+
 const orderSchema = new mongoose.Schema(
   {
     orderCode: {
       type: String,
-      required: false,
+      required: true,
       unique: true,
+      index: true,
     },
-    customerDetails: {
+    customer: {
       name: {
         type: String,
         required: true,
@@ -18,24 +44,25 @@ const orderSchema = new mongoose.Schema(
       guests: {
         type: Number,
         required: true,
+        min: 1,
       },
     },
     orderStatus: {
       type: String,
-      required: true,
-    },
-    orderDate: {
-      type: Date,
-      default: Date.now(),
+      enum: ["in_progress", "ready", "completed"],
+      default: "in_progress",
+      index: true,
     },
     bills: {
-      total: { type: Number, required: true },
+      total: { type: Number, required: true, min: 0 },
       tax: { type: Number, required: true },
-      totalWithTax: { type: Number, required: true },
+      totalWithTax: { type: Number, required: true, min: 0 },
     },
-    items: [],
+    items: {
+      type: [orderItemSchema],
+      validate: [(v) => v.length > 0, "Order items cannot be empty"],
+    },
     table: { type: mongoose.Schema.Types.ObjectId, ref: "Table" },
-    paymentMethod: String,
   },
   { timestamps: true }
 );

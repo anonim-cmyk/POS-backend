@@ -1,7 +1,7 @@
 require("dotenv").config();
 
 const express = require("express");
-const connetDB = require("./config/database");
+const connectDB = require("./config/database");
 const config = require("./config/config");
 const globalErrorHandler = require("./middlewares/globalErrorHandler");
 const createHttpError = require("http-errors");
@@ -10,7 +10,7 @@ const cors = require("cors");
 const app = express();
 
 const PORT = config.port;
-connetDB();
+connectDB();
 // Middlewares
 // Parse incoming request in json format
 app.use(
@@ -32,6 +32,8 @@ app.use("/api/user", require("./routes/userRoute"));
 app.use("/api/order", require("./routes/orderRoute"));
 app.use("/api/table", require("./routes/tableRoute"));
 app.use("/api/payment", require("./routes/paymentRoute"));
+app.use("/api/sales", require("./routes/reportRoute"));
+app.use("/api/invoices", require("./routes/invoiceRoute"));
 app.use("/api/categories", require("./routes/categoryRoute"));
 app.use("/api/dishes", require("./routes/dishRoute"));
 app.use("/api/dashboard", require("./routes/dashboardRoute"));

@@ -2,20 +2,22 @@ const mongoose = require("mongoose");
 
 const paymentSchema = new mongoose.Schema(
   {
-    paymentId: { type: String, unique: true },
-    orderId: {
+    paymentCode: { type: String, required: true, unique: true, index: true },
+    order: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Order",
+      required: true,
+      index: true,
     },
-    orderCode: { type: String, unique: true, sparse: true }, // ✅ harus unique
-    grossAmount: { type: Number, required: true }, // ✅ sesuai controller
+    amount: { type: Number, required: true, min: 0 },
     currency: { type: String, default: "IDR" },
-    status: { type: String, default: "pending" },
-    paymentMethod: { type: String, required: true }, // ✅ ubah dari "method"
-    customerName: { type: String, default: "Guest" },
-    customerPhone: { type: String, default: "-" },
-    tableNo: { type: Number },
-    tableId: { type: mongoose.Schema.Types.ObjectId, ref: "Table" },
+    status: {
+      type: String,
+      enum: ["success", "pending", "failed"],
+      default: "pending",
+      index: true,
+    },
+    paymentMethod: { type: String, enum: ["cash", "online"], required: true },
 
     // Midtrans specific
     snapToken: { type: String },

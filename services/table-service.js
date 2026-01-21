@@ -26,7 +26,7 @@ const addTable = async ({ tableNo, seats }) => {
 const getTables = async () => {
   return await Table.find().populate({
     path: "currentOrder",
-    select: "customerDetails",
+    select: "customer",
   });
 };
 

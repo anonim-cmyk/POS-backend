@@ -3,6 +3,7 @@ const Payment = require("../models/paymentModel");
 const Table = require("../models/tableModel");
 const Order = require("../models/orderModel");
 const createHttpError = require("http-errors");
+const crypto = require("crypto");
 
 // 🔹 Midtrans init
 const snap = new midtransClient.Snap({
@@ -18,98 +19,57 @@ const core = new midtransClient.CoreApi({
 // ===============================
 // 🟡 CREATE PAYMENT
 // ===============================
-const createPayment = async (payload) => {
-  const {
-    order_id,
-    tableNo,
-    tableId,
-    gross_amount,
-    customer_name,
-    customer_phone,
-    method,
-  } = payload;
+const createPayment = async ({ orderId, paymentMethod }) => {
+  const order = await Order.findById(orderId);
+  if (!order) throw createHttpError(404, "Order not found");
+  console.log("CREATE PAYMENT:", orderId, paymentMethod);
+  console.log("order: ", order);
 
-  console.log("CREATE PAYMENT:", method, order_id);
+  const existingPayment = await Payment.findOne({ order: order._id });
+  if (existingPayment) return existingPayment;
 
-  if (!order_id || !gross_amount || !method) {
-    throw createHttpError(400, "Missing required fields");
-  }
+  const paymentCode = `PAY-${crypto.randomUUID()}`;
 
-  const existingPayment = await Payment.findOne({ orderCode: order_id });
-  if (existingPayment) {
-    return {
-      payment: existingPayment,
-      snapToken: existingPayment.snapToken,
-    };
-  }
-
-  const normalizeMethod = method.toLowerCase();
-
-  if (normalizeMethod === "cash" && tableId) {
-    await Table.findByIdAndUpdate(tableId, { status: "Booked" });
-  }
-  const payment = new Payment({
-    orderCode: order_id,
-    tableNo,
-    tableId,
-    paymentMethod: normalizeMethod,
-    grossAmount: gross_amount,
-    customerName: customer_name || "Guest",
-    customerPhone: customer_phone || "-",
-    status: method === "cash" ? "success" : "pending",
+  const payment = await Payment.create({
+    paymentCode,
+    order: order._id,
+    amount: order.bills.totalWithTax,
+    paymentMethod,
+    status: paymentMethod === "cash" ? "success" : "pending",
   });
 
-  await payment.save();
-
-  if (normalizeMethod === "online") {
-    const amount = Number(gross_amount);
-    if (!amount || isNaN(amount)) {
-      throw createHttpError(400, "Invalid gross_amount");
-    }
-
-    const transaction = await snap.createTransaction({
+  if (paymentMethod === "online") {
+    const trx = await snap.createTransaction({
       transaction_details: {
-        order_id: payment.orderCode,
-        gross_amount: amount,
+        order_id: payment.paymentCode,
+        gross_amount: payment.amount,
       },
       customer_details: {
-        first_name: customer_name || "Guest",
-        phone: customer_phone || "-",
+        first_name: order.customer.name,
+        phone: order.customer.phone,
       },
     });
 
-    payment.snapToken = transaction.token;
-    payment.midtransResponse = transaction;
-    await payment.save();
+    payment.snapToken = trx.token;
+    payment.midtransResponse = trx;
 
-    return {
-      payment,
-      snapToken: payment.snapToken,
-    };
+    await payment.save();
   }
 
-  return {
-    payment,
-  };
+  return payment;
 };
 
 // ===============================
 // 🟢 VERIFY PAYMENT
 // ===============================
-const verifyPayment = async (order_id) => {
-  if (!order_id) {
-    throw createHttpError(400, "order_id required");
-  }
-
-  const statusResponse = await core.transaction.status(order_id);
+const verifyPayment = async (paymentCode) => {
+  const statusResponse = await core.transaction.status(paymentCode);
 
   let newStatus = "pending";
   if (
-    statusResponse.transaction_status === "capture" &&
-    statusResponse.fraud_status === "accept"
+    statusResponse.transaction_status === "capture" ||
+    statusResponse.transaction_status === "settlement"
   ) {
-    newStatus = "success";
-  } else if (statusResponse.transaction_status === "settlement") {
     newStatus = "success";
   } else if (
     ["cancel", "deny", "expire"].includes(statusResponse.transaction_status)
@@ -117,20 +77,15 @@ const verifyPayment = async (order_id) => {
     newStatus = "failed";
   }
 
-  const updatedPayment = await Payment.findOneAndUpdate(
-    { orderCode: order_id },
+  const payment = await Payment.findOneAndUpdate(
+    { paymentCode },
     { status: newStatus },
     { new: true }
   );
 
-  if (!updatedPayment) {
-    throw createHttpError(404, "Payment not found");
-  }
+  if (!payment) throw createHttpError(404, "Payment not found");
 
-  return {
-    ...statusResponse,
-    appStatus: newStatus,
-  };
+  return payment;
 };
 
 // ===============================
@@ -141,11 +96,9 @@ const handleWebhook = async (notification) => {
 
   let newStatus = "pending";
   if (
-    statusResponse.transaction_status === "capture" &&
-    statusResponse.fraud_status === "accept"
+    statusResponse.transaction_status === "capture" ||
+    statusResponse.transaction_status === "settlement"
   ) {
-    newStatus = "success";
-  } else if (statusResponse.transaction_status === "settlement") {
     newStatus = "success";
   } else if (
     ["cancel", "deny", "expire"].includes(statusResponse.transaction_status)
@@ -153,34 +106,28 @@ const handleWebhook = async (notification) => {
     newStatus = "failed";
   }
 
-  const updatedPayment = await Payment.findOneAndUpdate(
-    { orderCode: statusResponse.order_id },
+  const payment = await Payment.findOneAndUpdate(
+    { paymentCode: statusResponse.order_id },
     { status: newStatus },
     { new: true }
-  );
+  ).populate("order");
 
-  if (!updatedPayment) {
-    throw createHttpError(404, "Payment not found");
-  }
+  if (!payment) throw createHttpError(404, "Payment not found");
 
-  if (newStatus === "success" && updatedPayment.tableId) {
-    await Table.findByIdAndUpdate(updatedPayment.tableId, {
-      status: "Booked",
-    });
-  }
-
-  if (newStatus === "success") {
-    const order = await Order.findOne({
-      orderCode: updatedPayment.orderCode,
-    });
-
-    if (order && order.orderStatus !== "Completed") {
-      order.orderStatus = "Completed";
-      await order.save();
+  if (newStatus === "success" && payment.order) {
+    if (payment.order.table) {
+      await Table.findByIdAndUpdate(payment.order.table._id, {
+        status:
+          payment.order.orderStatus === "completed" ? "Available" : "Booked",
+        currentOrder:
+          payment.order.orderStatus === "completed" ? null : payment.order._id,
+      });
     }
   }
 
-  return true;
+  if (payment.status === newStatus) {
+    return payment;
+  }
 };
 
 const getPayments = async (queryParams = {}) => {
@@ -193,22 +140,21 @@ const getPayments = async (queryParams = {}) => {
 
   if (period) {
     const now = new Date();
-    let startDate;
+    let startDate = null;
 
-    switch (period) {
-      case "week":
-        startDate = new Date(now.setDate(now.getDate() - 7));
-        break;
-      case "month":
-        startDate = new Date();
-        startDate.setMonth(startDate.getMonth() - 1);
-        break;
-      case "year":
-        startDate = new Date();
-        startDate.setFullYear(startDate.getFullYear() - 1);
-        break;
-      default:
-        startDate = null;
+    if (period === "week") {
+      startDate = new Date();
+      startDate.setDate(now.getDate() - 7);
+    }
+
+    if (period === "month") {
+      startDate = new Date();
+      startDate.setMonth(now.getMonth() - 1);
+    }
+
+    if (period === "year") {
+      startDate = new Date();
+      startDate.setFullYear(now.getFullYear() - 1);
     }
 
     if (startDate) {
@@ -216,35 +162,41 @@ const getPayments = async (queryParams = {}) => {
     }
   }
 
-  const skip = (page - 1) * limit;
+  const pageNumber = parseInt(page);
+  const pageSize = parseInt(limit);
+  const skip = (pageNumber - 1) * pageSize;
 
-  const [payments, totalRecords] = await Promise.all([
+  const [payments, totalRecords, totalAmountResult] = await Promise.all([
     Payment.find(filter)
+      .populate({
+        path: "order",
+        select: "orderCode customer table orderStatus",
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(parseInt(limit)),
-    Payment.countDocuments(filter),
-  ]);
+      .limit(pageSize),
 
-  const totalAmountResult = await Payment.aggregate([
-    { $match: filter },
-    {
-      $group: {
-        _id: null,
-        total: { $sum: "$grossAmount" },
+    Payment.countDocuments(filter),
+
+    Payment.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$amount" },
+        },
       },
-    },
+    ]),
   ]);
 
   const totalAmount = totalAmountResult[0]?.total || 0;
-
-  const totalPages = Math.ceil(totalRecords / limit);
+  const totalPages = Math.ceil(totalRecords / pageSize);
 
   return {
     payments,
     totalPages,
     totalAmount,
-    currentPage: parseInt(page),
+    currentPage: pageNumber,
     totalRecords,
   };
 };

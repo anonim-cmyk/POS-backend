@@ -74,7 +74,7 @@ const getDashboardMetrics = async (req, res, next) => {
         {
           $match: { status: "success", createdAt: { $gte: start, $lte: end } },
         },
-        { $group: { _id: null, total: { $sum: "$grossAmount" } } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
       Payment.aggregate([
         {
@@ -83,15 +83,15 @@ const getDashboardMetrics = async (req, res, next) => {
             createdAt: { $gte: prevStart, $lt: prevEnd },
           },
         },
-        { $group: { _id: null, total: { $sum: "$grossAmount" } } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
       Order.countDocuments({ createdAt: { $gte: start, $lte: end } }),
       Order.countDocuments({
-        orderStatus: "Completed",
+        orderStatus: "completed",
         createdAt: { $gte: start, $lte: end },
       }),
       Order.countDocuments({
-        orderStatus: { $ne: "Completed" },
+        orderStatus: { $ne: "completed" },
         createdAt: { $gte: start, $lte: end },
       }),
       Order.countDocuments({ createdAt: { $gte: prevStart, $lt: prevEnd } }),

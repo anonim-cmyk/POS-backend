@@ -1,14 +1,19 @@
 const paymentService = require("../services/payment-service");
-
+const Order = require("../models/orderModel");
 // 🟡 CREATE
 const createOrder = async (req, res, next) => {
   try {
-    const payment = await paymentService.createPayment(req.body);
-    res.status(201).json({
-      success: true,
-      message: "Payment Created Successfully",
-      data: payment,
+    const { orderCode, paymentMethod } = req.body;
+
+    // Resolve orderCode ke _id
+    const order = await Order.findOne({ orderCode });
+    if (!order) throw createHttpError(404, "Order not found");
+
+    const payment = await paymentService.createPayment({
+      orderId: order._id,
+      paymentMethod,
     });
+    res.json({ success: true, data: payment });
   } catch (err) {
     next(err);
   }
