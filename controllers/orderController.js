@@ -31,6 +31,8 @@ const getOrderById = async (req, res, next) => {
 
 // GET ALL
 const getOrders = async (req, res, next) => {
+  console.log("request: ", req.query);
+
   try {
     const orders = await orderService.getOrders(req.query);
     res.status(200).json({ success: true, ...orders });

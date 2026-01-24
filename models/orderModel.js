@@ -33,6 +33,10 @@ const orderSchema = new mongoose.Schema(
       unique: true,
       index: true,
     },
+    payment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Payment",
+    },
     customer: {
       name: {
         type: String,

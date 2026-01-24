@@ -2,10 +2,10 @@ const reportService = require("../services/report-service");
 
 const getSalesReport = async (req, res, next) => {
   try {
-    const { range = "30d" } = req.query;
+    const { period } = req.query;
+    console.log("period: ", period);
 
-    const report = await reportService.getSalesReport(range);
-
+    const report = await reportService.getSalesReport(period);
     res.status(200).json({
       success: true,
       data: report,

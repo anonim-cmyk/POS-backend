@@ -70,20 +70,33 @@ const getDashboardMetrics = async (req, res, next) => {
       inProgressOrdersCurrent,
       ordersPrev,
     ] = await Promise.all([
-      Payment.aggregate([
-        {
-          $match: { status: "success", createdAt: { $gte: start, $lte: end } },
-        },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
-      ]),
-      Payment.aggregate([
+      Order.aggregate([
         {
           $match: {
-            status: "success",
+            orderStatus: "completed",
+            createdAt: { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$bills.total" }, // ✅ NET revenue
+          },
+        },
+      ]),
+      Order.aggregate([
+        {
+          $match: {
+            orderStatus: "completed",
             createdAt: { $gte: prevStart, $lt: prevEnd },
           },
         },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$bills.total" },
+          },
+        },
       ]),
       Order.countDocuments({ createdAt: { $gte: start, $lte: end } }),
       Order.countDocuments({

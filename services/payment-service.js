@@ -33,9 +33,16 @@ const createPayment = async ({ orderId, paymentMethod }) => {
   const payment = await Payment.create({
     paymentCode,
     order: order._id,
+    orderCode: order.orderCode,
+    customerName: order.customer.name,
+    customerPhone: order.customer.phone,
     amount: order.bills.totalWithTax,
     paymentMethod,
     status: paymentMethod === "cash" ? "success" : "pending",
+  });
+
+  await Order.findByIdAndUpdate(order._id, {
+    payment: payment._id,
   });
 
   if (paymentMethod === "online") {
@@ -131,8 +138,19 @@ const handleWebhook = async (notification) => {
 };
 
 const getPayments = async (queryParams = {}) => {
-  const { page = 1, limit = 10, status, period } = queryParams;
+  const { page = 1, limit = 10, status, period, search } = queryParams;
   const filter = {};
+
+  if (search) {
+    filter.$or = [
+      {
+        orderCode: { $regex: search, $options: "i" },
+      },
+      {
+        customerName: { $regex: search, $options: "i" },
+      },
+    ];
+  }
 
   if (status) {
     filter.status = status;

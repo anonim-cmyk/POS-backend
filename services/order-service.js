@@ -4,7 +4,6 @@ const Dish = require("../models/dishModel");
 const Table = require("../models/tableModel");
 const createHttpError = require("http-errors");
 const crypto = require("crypto");
-const { validate } = require("../models/paymentModel");
 
 const ALLOWED_STATUS = ["in_progress", "ready", "completed"];
 
@@ -104,6 +103,7 @@ const getOrders = async ({
   limit = 10,
 } = {}) => {
   const query = {};
+  console.log("FILTER MASUK:", { status, period, search });
 
   // 🔹 Filter status
   if (status) {
@@ -152,6 +152,7 @@ const getOrders = async ({
   const [data, total] = await Promise.all([
     Order.find(query)
       .populate("table")
+      .populate("payment")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(Number(limit)),
