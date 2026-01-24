@@ -26,6 +26,7 @@ const getTables = async (req, res, next) => {
 };
 
 const updateTable = async (req, res, next) => {
+  console.log("UPDATE TABLE HIT:", req.params.id);
   try {
     const table = await tableService.updateTable(req.params.id, req.body);
 
@@ -40,6 +41,7 @@ const updateTable = async (req, res, next) => {
 };
 
 const updateTableStatus = async (req, res, next) => {
+  console.log("UPDATE TABLE STATUS HIT:", req.body);
   try {
     const table = await tableService.updateTableStatus(req.body);
 

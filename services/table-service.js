@@ -35,12 +35,13 @@ const updateTable = async (id, payload) => {
     throw createHttpError(400, "Invalid is table id!");
   }
 
+  console.time("updateTable");
   const table = await Table.findByIdAndUpdate(
     id,
     { $set: payload },
     { new: true, runValidators: true }
   );
-
+  console.timeEnd("updateTable");
   return table;
 };
 
